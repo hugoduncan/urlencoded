@@ -1,6 +1,4 @@
-#![crate_name = "urlencoded"]
-
-#![feature(default_type_params)]
+#![feature(core,io)]
 
 //! URL Encoded Plugin for Iron.
 //!
@@ -9,7 +7,6 @@
 
 extern crate iron;
 extern crate url;
-extern crate serialize;
 
 extern crate plugin;
 extern crate typemap;
@@ -17,11 +14,11 @@ extern crate typemap;
 use iron::Request;
 
 use url::form_urlencoded;
-use std::collections::hash_map::{HashMap, Occupied, Vacant};
-use std::str;
+use std::collections::hash_map::{Entry, HashMap};
+use std::str::{self, Utf8Error};
 
-use plugin::{PluginFor, Phantom};
-use typemap::Assoc;
+use plugin::{Plugin, Pluggable};
+use typemap::Key;
 
 /// Plugin for `Request` that extracts URL encoded data from the URL query string.
 ///
@@ -33,48 +30,68 @@ pub struct UrlEncodedQuery;
 /// Use it like this: `req.get_ref::<UrlEncodedBody>()`
 pub struct UrlEncodedBody;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ErrorType{
+    EncodingError(Utf8Error),
+    EmptyQuery
+}
+
 /// Hashmap mapping strings to vectors of strings.
 pub type QueryMap = HashMap<String, Vec<String>>;
 
-impl Assoc<QueryMap> for UrlEncodedQuery {}
-impl Assoc<QueryMap> for UrlEncodedBody {}
+impl Pluggable for UrlEncodedQuery {}
 
-impl PluginFor<Request, QueryMap> for UrlEncodedQuery {
-    fn eval(req: &mut Request, _: Phantom<UrlEncodedQuery>) -> Option<QueryMap> {
+impl Pluggable for UrlEncodedBody {}
+
+impl Key for UrlEncodedQuery {
+    type Value = QueryMap;
+}
+
+impl Key for UrlEncodedBody {
+    type Value = QueryMap;
+}
+
+impl<'a> Plugin<Request<'a>> for UrlEncodedQuery {
+    type Error = ErrorType;
+    fn eval(req: &mut Request) -> Result<QueryMap, ErrorType> {
         match req.url.query {
-            Some(ref query) => create_param_hashmap(query.as_slice()),
-            None => None
+            Some(ref query) => create_param_hashmap(&query[]),
+            None => Err(ErrorType::EmptyQuery)
         }
     }
 }
 
-
-impl PluginFor<Request, HashMap<String, Vec<String>>> for UrlEncodedBody {
-    fn eval(req: &mut Request, _: Phantom<UrlEncodedBody>) -> Option<QueryMap> {
-        str::from_utf8(req.body.as_slice()).and_then(create_param_hashmap)
+impl<'a> Plugin<Request<'a>> for UrlEncodedBody {
+    type Error = ErrorType;
+    fn eval(req: &mut Request) -> Result<QueryMap, ErrorType> {
+        str::from_utf8(&req.body.read_to_end().unwrap())
+            .or_else(|e| Err(ErrorType::EncodingError(e)))
+            .and_then(create_param_hashmap)
     }
 }
 
 /// Parse a urlencoded string into an optional HashMap.
-fn create_param_hashmap(data: &str) -> Option<HashMap<String, Vec<String>>> {
+fn create_param_hashmap(data: &str) -> Result<QueryMap, ErrorType> {
     match data {
-        "" => None,
-        _ => Some(combine_duplicates(form_urlencoded::parse(data.as_bytes())))
+        "" => Err(ErrorType::EmptyQuery),
+        _ => Ok(combine_duplicates(form_urlencoded::parse(data.as_bytes())))
     }
 }
 
 /// Convert a list of (key, value) pairs into a hashmap with vector values.
-fn combine_duplicates(q: Vec<(String, String)>) -> HashMap<String, Vec<String>> {
+fn combine_duplicates(q: Vec<(String, String)>) -> QueryMap {
 
-    let mut deduplicated: HashMap<String, Vec<String>> = HashMap::new();
+    let mut deduplicated: QueryMap = HashMap::new();
 
     for (k, v) in q.into_iter() {
-        match deduplicated.entry(k) {
+        let is_new = match deduplicated.entry(k.clone()) {
             // Already a Vec here, push onto it
-            Occupied(entry) => { entry.into_mut().push(v); },
-
+            Entry::Occupied(entry) => { entry.into_mut().push(v.clone()); false},
+            Entry::Vacant(_) => true
+        };
+        if is_new {
             // No value, create a one-element Vec.
-            Vacant(entry) => { entry.set(vec![v]); }
+            deduplicated.insert(k.clone(), vec![v]);
         };
     }
 
