@@ -1,4 +1,5 @@
 #![feature(core,io)]
+#![deny(missing_docs)]
 
 //! URL Encoded Plugin for Iron.
 //!
@@ -15,10 +16,14 @@ use iron::Request;
 
 use url::form_urlencoded;
 use std::collections::hash_map::{Entry, HashMap};
+use std::error::Error;
+use std::fmt::{self, Display};
 use std::str::{self, Utf8Error};
 
 use plugin::{Plugin, Pluggable};
 use typemap::Key;
+
+pub use UrlDecodingError::*;
 
 /// Plugin for `Request` that extracts URL encoded data from the URL query string.
 ///
@@ -30,17 +35,42 @@ pub struct UrlEncodedQuery;
 /// Use it like this: `req.get_ref::<UrlEncodedBody>()`
 pub struct UrlEncodedBody;
 
+/// Error type for reporting decoding errors.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ErrorType{
+pub enum UrlDecodingError{
+    /// A UTF-8 encoding issue.
     EncodingError(Utf8Error),
+    /// An Empty query string was found.
     EmptyQuery
 }
+
+impl Display for UrlDecodingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            &EncodingError(err) => write!(f, "Invalid query string: {}", err),
+            &EmptyQuery => write!(f, "An emppty query string was found")
+        }
+    }
+}
+
+impl Error for UrlDecodingError {
+    fn description(&self) -> &str {
+        "Error decoding a UrlEncoded query or body"
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match self {
+            &EncodingError(ref err) => Some(err),
+            _ => None
+        }
+    }
+}
+
 
 /// Hashmap mapping strings to vectors of strings.
 pub type QueryMap = HashMap<String, Vec<String>>;
 
 impl Pluggable for UrlEncodedQuery {}
-
 impl Pluggable for UrlEncodedBody {}
 
 impl Key for UrlEncodedQuery {
@@ -52,28 +82,28 @@ impl Key for UrlEncodedBody {
 }
 
 impl<'a> Plugin<Request<'a>> for UrlEncodedQuery {
-    type Error = ErrorType;
-    fn eval(req: &mut Request) -> Result<QueryMap, ErrorType> {
+    type Error = UrlDecodingError;
+    fn eval(req: &mut Request) -> Result<QueryMap, UrlDecodingError> {
         match req.url.query {
             Some(ref query) => create_param_hashmap(&query[]),
-            None => Err(ErrorType::EmptyQuery)
+            None => Err(UrlDecodingError::EmptyQuery)
         }
     }
 }
 
 impl<'a> Plugin<Request<'a>> for UrlEncodedBody {
-    type Error = ErrorType;
-    fn eval(req: &mut Request) -> Result<QueryMap, ErrorType> {
+    type Error = UrlDecodingError;
+    fn eval(req: &mut Request) -> Result<QueryMap, UrlDecodingError> {
         str::from_utf8(&req.body.read_to_end().unwrap())
-            .or_else(|e| Err(ErrorType::EncodingError(e)))
+            .or_else(|e| Err(UrlDecodingError::EncodingError(e)))
             .and_then(create_param_hashmap)
     }
 }
 
 /// Parse a urlencoded string into an optional HashMap.
-fn create_param_hashmap(data: &str) -> Result<QueryMap, ErrorType> {
+fn create_param_hashmap(data: &str) -> Result<QueryMap, UrlDecodingError> {
     match data {
-        "" => Err(ErrorType::EmptyQuery),
+        "" => Err(UrlDecodingError::EmptyQuery),
         _ => Ok(combine_duplicates(form_urlencoded::parse(data.as_bytes())))
     }
 }
@@ -84,14 +114,10 @@ fn combine_duplicates(q: Vec<(String, String)>) -> QueryMap {
     let mut deduplicated: QueryMap = HashMap::new();
 
     for (k, v) in q.into_iter() {
-        let is_new = match deduplicated.entry(k.clone()) {
+        match deduplicated.entry(k) {
             // Already a Vec here, push onto it
-            Entry::Occupied(entry) => { entry.into_mut().push(v.clone()); false},
-            Entry::Vacant(_) => true
-        };
-        if is_new {
-            // No value, create a one-element Vec.
-            deduplicated.insert(k.clone(), vec![v]);
+            Entry::Occupied(entry) =>  { entry.into_mut().push(v.clone()); }
+            Entry::Vacant(vacant) => { vacant.insert(vec![v]); }
         };
     }
 

@@ -4,7 +4,8 @@
 extern crate iron;
 extern crate urlencoded;
 
-use iron::{Iron, Request, Response, IronResult, Plugin, Set, status};
+use iron::prelude::*;
+use iron::status;
 use urlencoded::UrlEncodedBody;
 use std::old_io::net::ip::Ipv4Addr;
 
@@ -14,7 +15,7 @@ fn log_post_data(req: &mut Request) -> IronResult<Response> {
         Err(x) => println!("Error, no body found: {:?}", x)
     };
 
-    Ok(Response::new().set((status::Ok,"Hello!")))
+    Ok(Response::with((status::Ok,"Hello!")))
 }
 
 // Test with `curl -i -X POST "http://localhost:3000/" --data "fruit=apple&name=iron&fruit=pear"`

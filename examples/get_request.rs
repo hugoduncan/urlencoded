@@ -6,7 +6,8 @@ extern crate urlencoded;
 
 use std::old_io::net::ip::Ipv4Addr;
 
-use iron::{Iron, Request, Response, IronResult, Plugin, Set, status};
+use iron::prelude::*;
+use iron::status;
 use urlencoded::UrlEncodedQuery;
 
 fn log_params(req: &mut Request) -> IronResult<Response> {
@@ -16,7 +17,7 @@ fn log_params(req: &mut Request) -> IronResult<Response> {
         Err(x) => println!("Error, no query string found: {:?}", x)
     };
 
-    Ok(Response::new().set((status::Ok,"Hello!")))
+    Ok(Response::with((status::Ok,"Hello!")))
 }
 
 // Test out the server with `curl -i "http://localhost:3000/?name=franklin&name=trevor"`
