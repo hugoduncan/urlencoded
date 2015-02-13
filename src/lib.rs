@@ -1,4 +1,4 @@
-#![feature(core,io)]
+#![feature(core, io, std_misc)]
 #![deny(missing_docs)]
 
 //! URL Encoded Plugin for Iron.
