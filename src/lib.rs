@@ -1,4 +1,4 @@
-#![feature(core, io, std_misc)]
+#![feature(core, std_misc)]
 #![deny(missing_docs)]
 
 //! URL Encoded Plugin for Iron.
@@ -6,6 +6,7 @@
 //! Parses "url encoded" data from client requests.
 //! Capable of parsing both URL query strings and POST request bodies.
 
+extern crate bodyparser;
 extern crate iron;
 extern crate url;
 
@@ -18,7 +19,6 @@ use url::form_urlencoded;
 use std::collections::hash_map::{Entry, HashMap};
 use std::error::Error;
 use std::fmt::{self, Display};
-use std::str::{self, Utf8Error};
 
 use plugin::{Plugin, Pluggable};
 use typemap::Key;
@@ -36,10 +36,10 @@ pub struct UrlEncodedQuery;
 pub struct UrlEncodedBody;
 
 /// Error type for reporting decoding errors.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum UrlDecodingError{
-    /// A UTF-8 encoding issue.
-    EncodingError(Utf8Error),
+    /// An error in rhe request body
+    BodyError(bodyparser::BodyError),
     /// An Empty query string was found.
     EmptyQuery
 }
@@ -47,7 +47,7 @@ pub enum UrlDecodingError{
 impl Display for UrlDecodingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            &EncodingError(err) => write!(f, "Invalid query string: {}", err),
+            &BodyError(ref err) => write!(f, "Invalid body: {}", err),
             &EmptyQuery => write!(f, "An emppty query string was found")
         }
     }
@@ -60,7 +60,7 @@ impl Error for UrlDecodingError {
 
     fn cause(&self) -> Option<&Error> {
         match self {
-            &EncodingError(ref err) => Some(err),
+            &BodyError(ref err) => Some(err),
             _ => None
         }
     }
@@ -94,9 +94,10 @@ impl<'a> Plugin<Request<'a>> for UrlEncodedQuery {
 impl<'a> Plugin<Request<'a>> for UrlEncodedBody {
     type Error = UrlDecodingError;
     fn eval(req: &mut Request) -> Result<QueryMap, UrlDecodingError> {
-        str::from_utf8(&req.body.read_to_end().unwrap())
-            .or_else(|e| Err(UrlDecodingError::EncodingError(e)))
-            .and_then(create_param_hashmap)
+        req.get::<bodyparser::Raw>()
+            .map_err(|e| UrlDecodingError::BodyError(e))
+            .map(|x| x.ok_or(UrlDecodingError::EmptyQuery))
+            .and_then(|x| create_param_hashmap(&x.unwrap()[]))
     }
 }
 

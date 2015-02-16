@@ -16,3 +16,6 @@ iron = "*"
 url = "*"
 typemap = "*"
 plugin = "*"
+
+[dependencies.bodyparser]
+git = "https://github.com/iron/body-parser.git"
